@@ -46,6 +46,9 @@ stream_DATA = $(NULL)
 recordingsdir = $(datadir)/janus/recordings
 recordings_DATA = $(NULL)
 
+chunksdir = $(datadir)/janus/chunks
+chunks_DATA = $(NULL)
+
 luadir = $(datadir)/janus/lua
 lua_DATA = $(NULL)
 
@@ -66,6 +69,7 @@ jsmodules_DATA = html/janus.js
 	    s|[@]transportdir[@]|$(transportdir)|;\
 	    s|[@]eventdir[@]|$(eventdir)|;\
 	    s|[@]recordingsdir[@]|$(recordingsdir)|;\
+		s|[@]chunksdir[@]|$(chunksdir)|;\
 	    s|[@]demosdir[@]|$(demosdir)|;\
 	    s|[@]streamdir[@]|$(streamdir)|; \
 	    s|[@]luadir[@]|$(luadir)|; \
