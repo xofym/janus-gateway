@@ -384,6 +384,17 @@ EXTRA_DIST += \
 CLEANFILES += conf/janus.plugin.recordplay.jcfg.sample
 endif
 
+if ENABLE_PLUGIN_HLS
+plugin_LTLIBRARIES += plugins/libjanus_hls.la
+plugins_libjanus_hls_la_SOURCES = plugins/janus_hls.c
+plugins_libjanus_hls_la_CFLAGS = $(plugins_cflags)
+plugins_libjanus_hls_la_LDFLAGS = $(plugins_ldflags)
+plugins_libjanus_hls_la_LIBADD = $(plugins_libadd)
+conf_DATA += conf/janus.plugin.hls.jcfg.sample
+EXTRA_DIST += conf/janus.plugin.hls.jcfg.sample.in
+CLEANFILES += conf/janus.plugin.hls.jcfg.sample
+endif
+
 if ENABLE_PLUGIN_SIP
 plugin_LTLIBRARIES += plugins/libjanus_sip.la
 plugins_libjanus_sip_la_SOURCES = plugins/janus_sip.c
