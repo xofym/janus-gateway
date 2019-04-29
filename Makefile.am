@@ -390,7 +390,7 @@ endif
 
 if ENABLE_PLUGIN_HLS
 plugin_LTLIBRARIES += plugins/libjanus_hls.la
-plugins_libjanus_hls_la_SOURCES = plugins/janus_hls.c
+plugins_libjanus_hls_la_SOURCES = plugins/janus_hls.c plugins/janus_hls_recorder.h plugins/janus_hls_recorder.c
 plugins_libjanus_hls_la_CFLAGS = $(plugins_cflags)
 plugins_libjanus_hls_la_LDFLAGS = $(plugins_ldflags)
 plugins_libjanus_hls_la_LIBADD = $(plugins_libadd)

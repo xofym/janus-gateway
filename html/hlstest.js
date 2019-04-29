@@ -55,6 +55,7 @@ var opaqueId = "hlstest-"+Janus.randomString(12);
 
 var spinner = null;
 var bandwidth = 1024 * 1024;
+var keyframe = 60000;
 
 var myname = null;
 var recording = false;
@@ -169,7 +170,7 @@ $(document).ready(function() {
 													'message': {
 														'request': 'configure',
 														'video-bitrate-max': bandwidth, // Reduce the bitrate
-														'video-keyframe-interval': 15000 // Keep the 15 seconds key frame interval
+														'video-keyframe-interval': keyframe // Keep the 60 seconds key frame interval
 													}
 												});
 											}
@@ -349,7 +350,7 @@ function startRecording() {
 			'message': {
 				'request': 'configure',
 				'video-bitrate-max': bandwidth, // a quarter megabit
-				'video-keyframe-interval': 15000 // 15 seconds
+				'video-keyframe-interval': keyframe // 60 seconds
 			}
 		});
 

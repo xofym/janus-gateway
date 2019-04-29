@@ -13,6 +13,8 @@
 
 #include "plugin.h"
 
+#include "janus_hls_recorder.h"
+
 #include <dirent.h>
 #include <arpa/inet.h>
 #include <sys/stat.h>
@@ -142,10 +144,8 @@ typedef struct janus_hls_recording {
 	char *date;					/* Time of the recording */
 	char *arc_file;				/* Audio file name */
 	janus_audiocodec acodec;	/* Codec used for audio, if available */
-	int audio_pt;				/* Payload types to use for audio when playing recordings */
 	char *vrc_file;				/* Video file name */
 	janus_videocodec vcodec;	/* Codec used for video, if available */
-	int video_pt;				/* Payload types to use for audio when playing recordings */
 	volatile gint completed;	/* Whether this recording was completed or still going on */
 	volatile gint destroyed;	/* Whether this recording has been marked as destroyed */
 	janus_refcount ref;			/* Reference counter */
@@ -162,6 +162,7 @@ typedef struct janus_hls_session {
 	gboolean active;
 	gboolean recorder;		/* Whether this session is used to record or to replay a WebRTC session */
 	janus_hls_recording *recording;
+	janus_hls_recorder *rc; /* HLS recorder */
 	janus_recorder *arc;	/* Audio recorder */
 	janus_recorder *vrc;	/* Video recorder */
 	janus_mutex rec_mutex;	/* Mutex to protect the recorders from race conditions */
@@ -221,10 +222,6 @@ static char *recordings_path = NULL;
 
 /* Helper to send RTCP feedback back to recorders, if needed */
 void janus_hls_send_rtcp_feedback(janus_plugin_session *handle, int video, char *buf, int len);
-
-/* To make things easier, we use static payload types for viewers (unless it's for G.711 or G.722) */
-#define AUDIO_PT		111
-#define VIDEO_PT		100
 
 /* Helper method to check which codec was used in a specific recording */
 static const char *janus_hls_parse_codec(const char *dir, const char *filename) {
@@ -602,6 +599,7 @@ json_t *janus_hls_query_session(janus_plugin_session *handle) {
 	if (g_atomic_int_get(&stopping) || !g_atomic_int_get(&initialized)) {
 		return NULL;
 	}
+
 	janus_mutex_lock(&sessions_mutex);
 	janus_hls_session *session = janus_hls_lookup_session(handle);
 	if (!session) {
@@ -609,6 +607,7 @@ json_t *janus_hls_query_session(janus_plugin_session *handle) {
 		JANUS_LOG(LOG_ERR, "No session associated with this handle...\n");
 		return NULL;
 	}
+
 	janus_refcount_increase(&session->ref);
 	janus_mutex_unlock(&sessions_mutex);
 	/* In the echo test, every session is the same: we just provide some configure info */
@@ -620,9 +619,11 @@ json_t *janus_hls_query_session(janus_plugin_session *handle) {
 		json_object_set_new(info, "recording_name", json_string(session->recording->name));
 		janus_refcount_decrease(&session->recording->ref);
 	}
+
 	json_object_set_new(info, "hangingup", json_integer(g_atomic_int_get(&session->hangingup)));
 	json_object_set_new(info, "destroyed", json_integer(g_atomic_int_get(&session->destroyed)));
 	janus_refcount_decrease(&session->ref);
+
 	return info;
 }
 
@@ -644,8 +645,10 @@ struct janus_plugin_result *janus_hls_handle_message(janus_plugin_session *handl
 		JANUS_LOG(LOG_ERR, "No session associated with this handle...\n");
 		error_code = JANUS_HLS_ERROR_UNKNOWN_ERROR;
 		g_snprintf(error_cause, 512, "%s", "No session associated with this handle...");
+
 		goto plugin_response;
 	}
+
 	/* Increase the reference counter for this session: we'll decrease it after we handle the message */
 	janus_refcount_increase(&session->ref);
 	janus_mutex_unlock(&sessions_mutex);
@@ -653,6 +656,7 @@ struct janus_plugin_result *janus_hls_handle_message(janus_plugin_session *handl
 		JANUS_LOG(LOG_ERR, "Session has already been destroyed...\n");
 		error_code = JANUS_HLS_ERROR_UNKNOWN_ERROR;
 		g_snprintf(error_cause, 512, "%s", "Session has already been destroyed...");
+
 		goto plugin_response;
 	}
 
@@ -660,24 +664,37 @@ struct janus_plugin_result *janus_hls_handle_message(janus_plugin_session *handl
 		JANUS_LOG(LOG_ERR, "No message??\n");
 		error_code = JANUS_HLS_ERROR_NO_MESSAGE;
 		g_snprintf(error_cause, 512, "%s", "No message??");
+
 		goto plugin_response;
 	}
+
 	if (!json_is_object(root)) {
 		JANUS_LOG(LOG_ERR, "JSON error: not an object\n");
 		error_code = JANUS_HLS_ERROR_INVALID_JSON;
 		g_snprintf(error_cause, 512, "JSON error: not an object");
+
 		goto plugin_response;
 	}
+
 	/* Get the request first */
-	JANUS_VALIDATE_JSON_OBJECT(root, request_parameters,
-		error_code, error_cause, TRUE,
-		JANUS_HLS_ERROR_MISSING_ELEMENT, JANUS_HLS_ERROR_INVALID_ELEMENT);
+	JANUS_VALIDATE_JSON_OBJECT(
+		root,
+		request_parameters,
+		error_code,
+		error_cause,
+		TRUE,
+		JANUS_HLS_ERROR_MISSING_ELEMENT,
+		JANUS_HLS_ERROR_INVALID_ELEMENT
+	);
+
 	if (error_code != 0) {
 		goto plugin_response;
 	}
+
 	json_t *request = json_object_get(root, "request");
 	/* Some requests ('create' and 'destroy') can be handled synchronously */
 	const char *request_text = json_string_value(request);
+
 	if (!strcasecmp(request_text, "configure")) {
 		JANUS_VALIDATE_JSON_OBJECT(
 			root,
@@ -698,7 +715,7 @@ struct janus_plugin_result *janus_hls_handle_message(janus_plugin_session *handl
 			JANUS_LOG(LOG_VERB, "Video bitrate has been set to %"SCNu32"\n", session->video_bitrate);
 		}
 
-		json_t *video_keyframe_interval= json_object_get(root, "video-keyframe-interval");
+		json_t *video_keyframe_interval = json_object_get(root, "video-keyframe-interval");
 		if (video_keyframe_interval) {
 			session->video_keyframe_interval = json_integer_value(video_keyframe_interval);
 			JANUS_LOG(LOG_VERB, "Video keyframe interval has been set to %u\n", session->video_keyframe_interval);
@@ -905,6 +922,9 @@ void janus_hls_incoming_rtp(janus_plugin_session *handle, int video, char *buf, 
 
 		header->ssrc = htonl(session->rec_vssrc);
 		janus_recorder_save_frame(session->vrc, buf, len);
+
+		JANUS_LOG(LOG_VERB, "[%s-%p] Save frame len: %ld\n", JANUS_HLS_PACKAGE, handle, len);
+
 		/* Restore header or core statistics will be messed up */
 		header->ssrc = htonl(ssrc);
 		header->timestamp = htonl(timestamp);
@@ -913,7 +933,7 @@ void janus_hls_incoming_rtp(janus_plugin_session *handle, int video, char *buf, 
 		/* Save the frame if we're recording */
 		janus_recorder_save_frame(video ? session->vrc : session->arc, buf, len);
 
-		JANUS_LOG(LOG_DBG, "[%s-%p] Save frame len: %ld\n", JANUS_HLS_PACKAGE, handle, len);
+		JANUS_LOG(LOG_VERB, "[%s-%p] Save frame len: %ld\n", JANUS_HLS_PACKAGE, handle, len);
 	}
 
 	janus_hls_send_rtcp_feedback(handle, video, buf, len);
@@ -1017,8 +1037,8 @@ static void janus_hls_hangup_media_internal(janus_plugin_session *handle) {
 		session->recording = NULL;
 	}
 
-	int i=0;
-	for (i=0; i<3; i++) {
+	int i = 0;
+	for (i = 0; i<3; i++) {
 		session->ssrc[i] = 0;
 		g_free(session->rid[i]);
 		session->rid[i] = NULL;
@@ -1244,19 +1264,6 @@ static void *janus_hls_handler(void *data) {
 				JANUS_LOG(LOG_VERB, "Video codec: %s\n", janus_videocodec_name(rec->vcodec));
 			}
 
-			rec->audio_pt = AUDIO_PT;
-			if (rec->acodec != JANUS_AUDIOCODEC_NONE) {
-				/* Some audio codecs have a fixed payload type that we can't mess with */
-				if (rec->acodec == JANUS_AUDIOCODEC_PCMU) {
-					rec->audio_pt = 0;
-				} else if (rec->acodec == JANUS_AUDIOCODEC_PCMA) {
-					rec->audio_pt = 8;
-				} else if (rec->acodec == JANUS_AUDIOCODEC_G722) {
-					rec->audio_pt = 9;
-				}
-			}
-
-			rec->video_pt = VIDEO_PT;
 			/* Create a date string */
 			time_t t = time(NULL);
 			struct tm *tmv = localtime(&t);
@@ -1325,8 +1332,8 @@ recdone:
 				session->sim_context.templayer_target = 2;	/* Let's aim for all temporal layers */
 				if (rec->vcodec != JANUS_VIDEOCODEC_VP8 && rec->vcodec != JANUS_VIDEOCODEC_H264) {
 					/* VP8 r H.264 were not negotiated, if simulcasting was enabled then disable it here */
-					int i=0;
-					for (i=0; i<3; i++) {
+					int i = 0;
+					for (i = 0; i<3; i++) {
 						session->ssrc[i] = 0;
 						g_free(session->rid[i]);
 						session->rid[i] = NULL;
