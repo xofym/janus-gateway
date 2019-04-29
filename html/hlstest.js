@@ -43,10 +43,11 @@
 // the whole session.
 //
 var server = null;
-if (window.location.protocol === 'http:')
+if (window.location.protocol === 'http:') {
 	server = "http://" + window.location.hostname + ":8088/janus";
-else
+} else {
 	server = "https://" + window.location.hostname + ":8089/janus";
+}
 
 var janus = null;
 var hls = null;
@@ -63,8 +64,6 @@ var selectedRecording = null;
 var selectedRecordingInfo = null;
 
 var doSimulcast = (getQueryStringValue("simulcast") === "yes" || getQueryStringValue("simulcast") === "true");
-var doSimulcast2 = (getQueryStringValue("simulcast2") === "yes" || getQueryStringValue("simulcast2") === "true");
-
 
 $(document).ready(function() {
 	// Initialize the library (all console debuggers enabled)
@@ -73,10 +72,11 @@ $(document).ready(function() {
 		$('#start').one('click', function() {
 			$(this).attr('disabled', true).unbind('click');
 			// Make sure the browser supports WebRTC
-			if(!Janus.isWebrtcSupported()) {
+			if (!Janus.isWebrtcSupported()) {
 				bootbox.alert("No WebRTC support... ");
 				return;
 			}
+
 			// Create session
 			janus = new Janus(
 				{
@@ -93,12 +93,8 @@ $(document).ready(function() {
 									Janus.log("Plugin attached! (" + hls.getPlugin() + ", id=" + hls.getId() + ")");
 									// Prepare the name prompt
 									$('#hls').removeClass('hide').show();
-									$('#start').removeAttr('disabled').html("Stop")
-										.click(function() {
-											$(this).attr('disabled', true);
-											janus.destroy();
-										});
-									updateRecsList();
+
+									$('#record').removeAttr('disabled').click(startRecording);
 								},
 								error: function(error) {
 									Janus.error("  -- Error attaching plugin...", error);
@@ -106,7 +102,7 @@ $(document).ready(function() {
 								},
 								consentDialog: function(on) {
 									Janus.debug("Consent dialog should be " + (on ? "on" : "off") + " now");
-									if(on) {
+									if (on) {
 										// Darken screen and show hint
 										$.blockUI({
 											message: '<div><img src="up_arrow.png"/></div>',
@@ -117,7 +113,8 @@ $(document).ready(function() {
 												color: '#aaa',
 												top: '10px',
 												left: (navigator.mozGetUserMedia ? '-100px' : '300px')
-											} });
+											}
+										});
 									} else {
 										// Restore screen
 										$.unblockUI();
@@ -131,10 +128,10 @@ $(document).ready(function() {
 									Janus.debug(" ::: Got a message :::");
 									Janus.debug(msg);
 									var result = msg["result"];
-									if(result !== null && result !== undefined) {
-										if(result["status"] !== undefined && result["status"] !== null) {
+									if (result !== null && result !== undefined) {
+										if (result["status"] !== undefined && result["status"] !== null) {
 											var event = result["status"];
-											if(event === 'preparing' || event === 'refreshing') {
+											if (event === 'preparing' || event === 'refreshing') {
 												Janus.log("Preparing the recording playout");
 												hls.createAnswer(
 													{
@@ -151,20 +148,23 @@ $(document).ready(function() {
 															bootbox.alert("WebRTC error... " + JSON.stringify(error));
 														}
 													});
-												if(result["warning"])
+												if (result["warning"]) {
 													bootbox.alert(result["warning"]);
-											} else if(event === 'recording') {
+												}
+											} else if (event === 'recording') {
 												// Got an ANSWER to our recording OFFER
-												if(jsep !== null && jsep !== undefined)
+												if (jsep !== null && jsep !== undefined) {
 													hls.handleRemoteJsep({jsep: jsep});
+												}
+
 												var id = result["id"];
-												if(id !== null && id !== undefined) {
+												if (id !== null && id !== undefined) {
 													Janus.log("The ID of the current recording is " + id);
 													recordingId = id;
 												}
-											} else if(event === 'slow_link') {
+											} else if (event === 'slow_link') {
 												var uplink = result["uplink"];
-												if(uplink !== 0) {
+												if (uplink !== 0) {
 													// Janus detected issues when receiving our media, let's slow down
 													bandwidth = parseInt(bandwidth / 1.5);
 													hls.send({
@@ -175,20 +175,18 @@ $(document).ready(function() {
 														}
 													});
 												}
-											} else if(event === 'playing') {
-												Janus.log("Playout has started!");
-											} else if(event === 'stopped') {
+											} else if (event === 'stopped') {
 												Janus.log("Session has stopped!");
 												var id = result["id"];
-												if(recordingId !== null && recordingId !== undefined) {
-													if(recordingId !== id) {
+												if (recordingId !== null && recordingId !== undefined) {
+													if (recordingId !== id) {
 														Janus.warn("Not a stop to our recording?");
 														return;
 													}
-													bootbox.alert("Recording completed! Check the list of recordings to replay it.");
+													//bootbox.alert("Recording completed! Check the list of recordings to replay it.");
 												}
-												if(selectedRecording !== null && selectedRecording !== undefined) {
-													if(selectedRecording !== id) {
+												if (selectedRecording !== null && selectedRecording !== undefined) {
+													if (selectedRecording !== id) {
 														Janus.warn("Not a stop to our playout?");
 														return;
 													}
@@ -201,11 +199,6 @@ $(document).ready(function() {
 												playing = false;
 												hls.hangup();
 												$('#record').removeAttr('disabled').click(startRecording);
-												$('#play').removeAttr('disabled').click(startPlayout);
-												$('#list').removeAttr('disabled').click(updateRecsList);
-												$('#recset').removeAttr('disabled');
-												$('#recslist').removeAttr('disabled');
-												updateRecsList();
 											}
 										}
 									} else {
@@ -219,26 +212,21 @@ $(document).ready(function() {
 										playing = false;
 										hls.hangup();
 										$('#record').removeAttr('disabled').click(startRecording);
-										$('#play').removeAttr('disabled').click(startPlayout);
-										$('#list').removeAttr('disabled').click(updateRecsList);
-										$('#recset').removeAttr('disabled');
-										$('#recslist').removeAttr('disabled');
-										updateRecsList();
 									}
 								},
 								onlocalstream: function(stream) {
-									if(playing === true)
+									if (playing === true)
 										return;
 									Janus.debug(" ::: Got a local stream :::");
 									Janus.debug(stream);
 									$('#videotitle').html("Recording...");
 									$('#stop').unbind('click').click(stop);
 									$('#video').removeClass('hide').show();
-									if($('#thevideo').length === 0)
+									if ($('#thevideo').length === 0)
 										$('#videobox').append('<video class="rounded centered" id="thevideo" width=320 height=240 autoplay playsinline muted="muted"/>');
 									Janus.attachMediaStream($('#thevideo').get(0), stream);
 									$("#thevideo").get(0).muted = "muted";
-									if(hls.webrtcStuff.pc.iceConnectionState !== "completed" &&
+									if (hls.webrtcStuff.pc.iceConnectionState !== "completed" &&
 											hls.webrtcStuff.pc.iceConnectionState !== "connected") {
 										$("#videobox").parent().block({
 											message: '<b>Publishing...</b>',
@@ -250,10 +238,10 @@ $(document).ready(function() {
 										});
 									}
 									var videoTracks = stream.getVideoTracks();
-									if(videoTracks === null || videoTracks === undefined || videoTracks.length === 0) {
+									if (videoTracks === null || videoTracks === undefined || videoTracks.length === 0) {
 										// No remote video
 										$('#thevideo').hide();
-										if($('#videobox .no-video-container').length === 0) {
+										if ($('#videobox .no-video-container').length === 0) {
 											$('#videobox').append(
 												'<div class="no-video-container">' +
 													'<i class="fa fa-video-camera fa-5 no-video-icon"></i>' +
@@ -266,18 +254,18 @@ $(document).ready(function() {
 									}
 								},
 								onremotestream: function(stream) {
-									if(playing === false)
+									if (playing === false)
 										return;
 									Janus.debug(" ::: Got a remote stream :::");
 									Janus.debug(stream);
-									if($('#thevideo').length === 0) {
+									if ($('#thevideo').length === 0) {
 										$('#videotitle').html(selectedRecordingInfo);
 										$('#stop').unbind('click').click(stop);
 										$('#video').removeClass('hide').show();
 										$('#videobox').append('<video class="rounded centered hide" id="thevideo" width=320 height=240 autoplay playsinline/>');
 										// No remote video yet
 										$('#videobox').append('<video class="rounded centered" id="waitingvideo" width=320 height=240 />');
-										if(spinner == null) {
+										if (spinner == null) {
 											var target = document.getElementById('videobox');
 											spinner = new Spinner({top:100}).spin(target);
 										} else {
@@ -287,17 +275,17 @@ $(document).ready(function() {
 										$("#thevideo").bind("playing", function () {
 											$('#waitingvideo').remove();
 											$('#thevideo').removeClass('hide');
-											if(spinner !== null && spinner !== undefined)
+											if (spinner !== null && spinner !== undefined)
 												spinner.stop();
 											spinner = null;
 										});
 									}
 									Janus.attachMediaStream($('#thevideo').get(0), stream);
 									var videoTracks = stream.getVideoTracks();
-									if(videoTracks === null || videoTracks === undefined || videoTracks.length === 0) {
+									if (videoTracks === null || videoTracks === undefined || videoTracks.length === 0) {
 										// No remote video
 										$('#thevideo').hide();
-										if($('#videobox .no-video-container').length === 0) {
+										if ($('#videobox .no-video-container').length === 0) {
 											$('#videobox').append(
 												'<div class="no-video-container">' +
 													'<i class="fa fa-video-camera fa-5 no-video-icon"></i>' +
@@ -313,7 +301,7 @@ $(document).ready(function() {
 									Janus.log(" ::: Got a cleanup notification :::");
 									// FIXME Reset status
 									$('#waitingvideo').remove();
-									if(spinner !== null && spinner !== undefined)
+									if (spinner !== null && spinner !== undefined)
 										spinner.stop();
 									spinner = null;
 									$('#videobox').empty();
@@ -322,11 +310,6 @@ $(document).ready(function() {
 									recording = false;
 									playing = false;
 									$('#record').removeAttr('disabled').click(startRecording);
-									$('#play').removeAttr('disabled').click(startPlayout);
-									$('#list').removeAttr('disabled').click(updateRecsList);
-									$('#recset').removeAttr('disabled');
-									$('#recslist').removeAttr('disabled');
-									updateRecsList();
 								}
 							});
 					},
@@ -344,71 +327,20 @@ $(document).ready(function() {
 	}});
 });
 
-function checkEnter(field, event) {
-	var theCode = event.keyCode ? event.keyCode : event.which ? event.which : event.charCode;
-	if(theCode == 13) {
-		if(field.id == 'name')
-			insertName();
-		return false;
-	} else {
-		return true;
-	}
-}
-
-function updateRecsList() {
-	$('#list').unbind('click');
-	$('#update-list').addClass('fa-spin');
-	var body = { "request": "list" };
-	Janus.debug("Sending message (" + JSON.stringify(body) + ")");
-	hls.send({"message": body, success: function(result) {
-		setTimeout(function() {
-			$('#list').click(updateRecsList);
-			$('#update-list').removeClass('fa-spin');
-		}, 500);
-		if(result === null || result === undefined) {
-			bootbox.alert("Got no response to our query for available recordings");
-			return;
-		}
-		if(result["list"] !== undefined && result["list"] !== null) {
-			$('#recslist').empty();
-			$('#record').removeAttr('disabled').click(startRecording);
-			$('#list').removeAttr('disabled').click(updateRecsList);
-			var list = result["list"];
-			list.sort(function(a, b) {return (a["date"] < b["date"]) ? 1 : ((b["date"] < a["date"]) ? -1 : 0);} );
-			Janus.debug("Got a list of available recordings:");
-			Janus.debug(list);
-			for(var mp in list) {
-				Janus.debug("  >> [" + list[mp]["id"] + "] " + list[mp]["name"] + " (" + list[mp]["date"] + ")");
-				$('#recslist').append("<li><a href='#' id='" + list[mp]["id"] + "'>" + list[mp]["name"] + " [" + list[mp]["date"] + "]" + "</a></li>");
-			}
-			$('#recslist a').unbind('click').click(function() {
-				selectedRecording = $(this).attr("id");
-				selectedRecordingInfo = $(this).text();
-				$('#recset').html($(this).html()).parent().removeClass('open');
-				$('#play').removeAttr('disabled').click(startPlayout);
-				return false;
-			});
-		}
-	}});
-}
-
 function startRecording() {
-	if(recording)
+	if (recording) {
 		return;
+	}
 	// Start a recording
 	recording = true;
 	playing = false;
 	bootbox.prompt("Insert a name for the recording (e.g., John Smith says hello)", function(result) {
-		if(result === null || result === undefined) {
+		if (result === null || result === undefined) {
 			recording = false;
 			return;
 		}
 		myname = result;
 		$('#record').unbind('click').attr('disabled', true);
-		$('#play').unbind('click').attr('disabled', true);
-		$('#list').unbind('click').attr('disabled', true);
-		$('#recset').attr('disabled', true);
-		$('#recslist').attr('disabled', true);
 
 		// bitrate and keyframe interval can be set at any time:
 		// before, after, during recording
@@ -442,29 +374,11 @@ function startRecording() {
 	});
 }
 
-function startPlayout() {
-	if(playing)
-		return;
-	// Start a playout
-	recording = false;
-	playing = true;
-	if(selectedRecording === undefined || selectedRecording === null) {
-		playing = false;
-		return;
-	}
-	$('#record').unbind('click').attr('disabled', true);
-	$('#play').unbind('click').attr('disabled', true);
-	$('#list').unbind('click').attr('disabled', true);
-	$('#recset').attr('disabled', true);
-	$('#recslist').attr('disabled', true);
-	var play = { "request": "play", "id": parseInt(selectedRecording) };
-	hls.send({"message": play});
-}
-
 function stop() {
 	// Stop a recording/playout
 	$('#stop').unbind('click');
 	var stop = { "request": "stop" };
+
 	hls.send({"message": stop});
 	hls.hangup();
 }
@@ -472,7 +386,9 @@ function stop() {
 // Helper to parse query string
 function getQueryStringValue(name) {
 	name = name.replace(/[\[]/, "\\[").replace(/[\]]/, "\\]");
+
 	var regex = new RegExp("[\\?&]" + name + "=([^&#]*)"),
 		results = regex.exec(location.search);
+
 	return results === null ? "" : decodeURIComponent(results[1].replace(/\+/g, " "));
 }
