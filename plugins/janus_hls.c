@@ -223,142 +223,6 @@ static char *recordings_path = NULL;
 /* Helper to send RTCP feedback back to recorders, if needed */
 void janus_hls_send_rtcp_feedback(janus_plugin_session *handle, int video, char *buf, int len);
 
-/* Helper method to check which codec was used in a specific recording */
-static const char *janus_hls_parse_codec(const char *dir, const char *filename) {
-	if (dir == NULL || filename == NULL) {
-		return NULL;
-	}
-	char source[1024];
-	if (strstr(filename, ".mjr")) {
-		g_snprintf(source, 1024, "%s/%s", dir, filename);
-	} else {
-		g_snprintf(source, 1024, "%s/%s.mjr", dir, filename);
-	}
-	FILE *file = fopen(source, "rb");
-	if (file == NULL) {
-		JANUS_LOG(LOG_ERR, "Could not open file %s\n", source);
-		return NULL;
-	}
-	fseek(file, 0L, SEEK_END);
-	long fsize = ftell(file);
-	fseek(file, 0L, SEEK_SET);
-
-	/* Pre-parse */
-	JANUS_LOG(LOG_VERB, "Pre-parsing file %s to generate ordered index...\n", source);
-	gboolean parsed_header = FALSE;
-	int bytes = 0;
-	long offset = 0;
-	uint16_t len = 0;
-	char prebuffer[1500];
-	memset(prebuffer, 0, 1500);
-	/* Let's look for timestamp resets first */
-	while (offset < fsize) {
-		/* Read frame header */
-		fseek(file, offset, SEEK_SET);
-		bytes = fread(prebuffer, sizeof(char), 8, file);
-		if (bytes != 8 || prebuffer[0] != 'M') {
-			JANUS_LOG(LOG_ERR, "Invalid header...\n");
-			fclose(file);
-			return NULL;
-		}
-		if (prebuffer[1] == 'E') {
-			/* Either the old .mjr format header ('MEETECHO' header followed by 'audio' or 'video'), or a frame */
-			offset += 8;
-			bytes = fread(&len, sizeof(uint16_t), 1, file);
-			len = ntohs(len);
-			offset += 2;
-			if (len == 5 && !parsed_header) {
-				/* This is the main header */
-				parsed_header = TRUE;
-				bytes = fread(prebuffer, sizeof(char), 5, file);
-				if (prebuffer[0] == 'v') {
-					JANUS_LOG(LOG_VERB, "This is an old video recording, assuming VP8\n");
-					fclose(file);
-					return "vp8";
-				} else if (prebuffer[0] == 'a') {
-					JANUS_LOG(LOG_VERB, "This is an old audio recording, assuming Opus\n");
-					fclose(file);
-					return "opus";
-				}
-			}
-			JANUS_LOG(LOG_WARN, "Unsupported recording media type...\n");
-			fclose(file);
-			return NULL;
-		} else if (prebuffer[1] == 'J') {
-			/* New .mjr format */
-			offset += 8;
-			bytes = fread(&len, sizeof(uint16_t), 1, file);
-			len = ntohs(len);
-			offset += 2;
-			if (len > 0 && !parsed_header) {
-				/* This is the info header */
-				bytes = fread(prebuffer, sizeof(char), len, file);
-				if (bytes < 0) {
-					JANUS_LOG(LOG_ERR, "Error reading from file... %s\n", strerror(errno));
-					fclose(file);
-					return NULL;
-				}
-				parsed_header = TRUE;
-				prebuffer[len] = '\0';
-				json_error_t error;
-				json_t *info = json_loads(prebuffer, 0, &error);
-				if (!info) {
-					JANUS_LOG(LOG_ERR, "JSON error: on line %d: %s\n", error.line, error.text);
-					JANUS_LOG(LOG_WARN, "Error parsing info header...\n");
-					fclose(file);
-					return NULL;
-				}
-				/* Is it audio or video? */
-				json_t *type = json_object_get(info, "t");
-				if (!type || !json_is_string(type)) {
-					JANUS_LOG(LOG_WARN, "Missing/invalid recording type in info header...\n");
-					json_decref(info);
-					fclose(file);
-					return NULL;
-				}
-				const char *t = json_string_value(type);
-				gboolean video = FALSE;
-				if (!strcasecmp(t, "v")) {
-					video = TRUE;
-				} else if (!strcasecmp(t, "a")) {
-					video = FALSE;
-				} else {
-					JANUS_LOG(LOG_WARN, "Unsupported recording type '%s' in info header...\n", t);
-					json_decref(info);
-					fclose(file);
-					return NULL;
-				}
-				/* What codec was used? */
-				json_t *codec = json_object_get(info, "c");
-				if (!codec || !json_is_string(codec)) {
-					JANUS_LOG(LOG_WARN, "Missing recording codec in info header...\n");
-					json_decref(info);
-					fclose(file);
-					return NULL;
-				}
-				const char *c = json_string_value(codec);
-				const char *mcodec = janus_sdp_match_preferred_codec(video ? JANUS_SDP_VIDEO : JANUS_SDP_AUDIO, (char *)c);
-				if (mcodec != NULL) {
-					/* Found! */
-					json_decref(info);
-					fclose(file);
-					return mcodec;
-				}
-				json_decref(info);
-			}
-			JANUS_LOG(LOG_WARN, "No codec found...\n");
-			fclose(file);
-			return NULL;
-		} else {
-			JANUS_LOG(LOG_ERR, "Invalid header...\n");
-			fclose(file);
-			return NULL;
-		}
-	}
-	fclose(file);
-	return NULL;
-}
-
 static void janus_hls_message_free(janus_hls_message *msg) {
 	if (!msg || msg == &exit_message) {
 		return;
@@ -405,6 +269,7 @@ int janus_hls_init(janus_callbacks *callback, const char *config_path) {
 		/* Still stopping from before */
 		return -1;
 	}
+
 	if (callback == NULL || config_path == NULL) {
 		/* Invalid arguments */
 		return -1;
@@ -415,15 +280,18 @@ int janus_hls_init(janus_callbacks *callback, const char *config_path) {
 	g_snprintf(filename, 255, "%s/%s.jcfg", config_path, JANUS_HLS_PACKAGE);
 	JANUS_LOG(LOG_VERB, "Configuration file: %s\n", filename);
 	janus_config *config = janus_config_parse(filename);
+
 	if (config == NULL) {
 		JANUS_LOG(LOG_WARN, "Couldn't find .jcfg configuration file (%s), trying .cfg\n", JANUS_HLS_PACKAGE);
 		g_snprintf(filename, 255, "%s/%s.cfg", config_path, JANUS_HLS_PACKAGE);
 		JANUS_LOG(LOG_VERB, "Configuration file: %s\n", filename);
 		config = janus_config_parse(filename);
 	}
+
 	if (config != NULL) {
 		janus_config_print(config);
 	}
+
 	/* Parse configuration */
 	if (config != NULL) {
 		janus_config_category *config_general = janus_config_get_create(config, NULL, janus_config_type_category, "general");
@@ -431,31 +299,38 @@ int janus_hls_init(janus_callbacks *callback, const char *config_path) {
 		if (path && path->value) {
 			recordings_path = g_strdup(path->value);
 		}
+
 		janus_config_item *events = janus_config_get(config, config_general, janus_config_type_item, "events");
 		if (events != NULL && events->value != NULL) {
 			notify_events = janus_is_true(events->value);
 		}
+
 		if (!notify_events && callback->events_is_enabled()) {
 			JANUS_LOG(LOG_WARN, "Notification of events to handlers disabled for %s\n", JANUS_HLS_NAME);
 		}
+
 		/* Done */
 		janus_config_destroy(config);
 		config = NULL;
 	}
+
 	if (recordings_path == NULL) {
 		JANUS_LOG(LOG_FATAL, "No recordings path specified, giving up...\n");
 		return -1;
 	}
+
 	/* Create the folder, if needed */
 	struct stat st = {0};
 	if (stat(recordings_path, &st) == -1) {
 		int res = janus_mkdir(recordings_path, 0755);
 		JANUS_LOG(LOG_VERB, "Creating folder: %d\n", res);
+
 		if (res != 0) {
 			JANUS_LOG(LOG_ERR, "%s", strerror(errno));
 			return -1;	/* No point going on... */
 		}
 	}
+
 	recordings = g_hash_table_new_full(g_int64_hash, g_int64_equal, (GDestroyNotify)g_free, (GDestroyNotify)janus_hls_recording_destroy);
 
 	sessions = g_hash_table_new_full(NULL, NULL, NULL, (GDestroyNotify)janus_hls_session_destroy);
@@ -471,9 +346,15 @@ int janus_hls_init(janus_callbacks *callback, const char *config_path) {
 	if (error != NULL) {
 		g_atomic_int_set(&initialized, 0);
 		JANUS_LOG(LOG_ERR, "Got error %d (%s) trying to launch the HLS handler thread...\n", error->code, error->message ? error->message : "??");
+
 		return -1;
 	}
+
+	/* init recorder */
+	janus_hls_recorder_init();
+
 	JANUS_LOG(LOG_INFO, "%s initialized!\n", JANUS_HLS_NAME);
+
 	return 0;
 }
 
@@ -578,20 +459,28 @@ void janus_hls_create_session(janus_plugin_session *handle, int *error) {
 void janus_hls_destroy_session(janus_plugin_session *handle, int *error) {
 	if (g_atomic_int_get(&stopping) || !g_atomic_int_get(&initialized)) {
 		*error = -1;
+
 		return;
 	}
+
 	janus_mutex_lock(&sessions_mutex);
 	janus_hls_session *session = janus_hls_lookup_session(handle);
 	if (!session) {
 		janus_mutex_unlock(&sessions_mutex);
 		JANUS_LOG(LOG_ERR, "No HLS session associated with this handle...\n");
 		*error = -2;
+
 		return;
 	}
+
+	/* close hls recorder */
+	janus_hls_recorder_destroy(session->rc);
+
 	JANUS_LOG(LOG_VERB, "Removing HLS session...\n");
 	janus_hls_hangup_media_internal(handle);
 	g_hash_table_remove(sessions, handle);
 	janus_mutex_unlock(&sessions_mutex);
+
 	return;
 }
 
@@ -605,6 +494,7 @@ json_t *janus_hls_query_session(janus_plugin_session *handle) {
 	if (!session) {
 		janus_mutex_unlock(&sessions_mutex);
 		JANUS_LOG(LOG_ERR, "No session associated with this handle...\n");
+
 		return NULL;
 	}
 
@@ -877,66 +767,26 @@ void janus_hls_incoming_rtp(janus_plugin_session *handle, int video, char *buf, 
 		return;
 	}
 
-	if (video && (session->ssrc[0] != 0 || session->rid[0] != NULL)) {
-		/* Handle simulcast: backup the header information first */
-		janus_rtp_header *header = (janus_rtp_header *)buf;
-		uint32_t seq_number = ntohs(header->seq_number);
-		uint32_t timestamp = ntohl(header->timestamp);
-		uint32_t ssrc = ntohl(header->ssrc);
-		/* Process this packet: don't save if it's not the SSRC/layer we wanted to handle */
-		gboolean save = janus_rtp_simulcasting_context_process_rtp(
-			&session->sim_context,
-			buf,
-			len,
-			session->ssrc,
-			session->rid,
-			session->recording->vcodec,
-			&session->context
-		);
-		/* Do we need to drop this? */
-		if (!save) {
-			return;
-		}
+	janus_hls_frame *frame = g_malloc(sizeof(janus_hls_frame));
+	frame->buffer = g_strdup(buf);
+	frame->len = len;
 
-		if (session->sim_context.need_pli) {
-			/* Send a PLI */
-			JANUS_LOG(LOG_VERB, "We need a PLI for the simulcast context\n");
-			char rtcpbuf[12];
-			memset(rtcpbuf, 0, 12);
-			janus_rtcp_pli((char *)&rtcpbuf, 12);
-			gateway->relay_rtcp(handle, 1, rtcpbuf, 12);
-		}
-
-		/* If we got here, update the RTP header and save the packet */
-		janus_rtp_header_update(header, &session->context, TRUE, 0);
-		if (session->recording->vcodec == JANUS_VIDEOCODEC_VP8) {
-			int plen = 0;
-			char *payload = janus_rtp_payload(buf, len, &plen);
-			janus_vp8_simulcast_descriptor_update(payload, plen, &session->vp8_context, session->sim_context.changed_substream);
-		}
-
-		/* Save the frame if we're recording (and make sure the SSRC never changes even if the substream does) */
-		if (session->rec_vssrc == 0) {
-			session->rec_vssrc = g_random_int();
-		}
-
-		header->ssrc = htonl(session->rec_vssrc);
-		janus_recorder_save_frame(session->vrc, buf, len);
-
-		JANUS_LOG(LOG_VERB, "[%s-%p] Save frame len: %ld\n", JANUS_HLS_PACKAGE, handle, len);
-
-		/* Restore header or core statistics will be messed up */
-		header->ssrc = htonl(ssrc);
-		header->timestamp = htonl(timestamp);
-		header->seq_number = htons(seq_number);
+	if (video) {
+		frame->type = AVMEDIA_TYPE_VIDEO;
 	} else {
-		/* Save the frame if we're recording */
-		janus_recorder_save_frame(video ? session->vrc : session->arc, buf, len);
-
-		JANUS_LOG(LOG_VERB, "[%s-%p] Save frame len: %ld\n", JANUS_HLS_PACKAGE, handle, len);
+		frame->type = AVMEDIA_TYPE_AUDIO;
 	}
 
+	janus_hls_recorder_save_frame(session->rc, frame);
+
+	/* Save the frame if we're recording */
+	//janus_recorder_save_frame(video ? session->vrc : session->arc, buf, len);
+
+	JANUS_LOG(LOG_VERB, "[%s-%p] Save frame len: %d\n", JANUS_HLS_PACKAGE, handle, len);
+
 	janus_hls_send_rtcp_feedback(handle, video, buf, len);
+
+	g_free(frame);
 }
 
 void janus_hls_incoming_rtcp(janus_plugin_session *handle, int video, char *buf, int len) {
@@ -1289,6 +1139,9 @@ static void *janus_hls_handler(void *data) {
 
 			session->recorder = TRUE;
 			session->recording = rec;
+
+			session->rc = janus_hls_recorder_create(recordings_path, name_text, 60);
+
 			session->sdp_version = 1;	/* This needs to be increased when it changes */
 			session->sdp_sessid = janus_get_real_time();
 			g_hash_table_insert(recordings, janus_uint64_dup(rec->id), rec);

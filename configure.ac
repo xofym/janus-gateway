@@ -617,8 +617,12 @@ AS_IF([test "x$enable_systemd_sockets" = "xyes"],
 
 PKG_CHECK_MODULES([PLUGINS],
                   [
-                    glib-2.0 >= $glib_version
-                    jansson >= $jansson_version
+				glib-2.0 >= $glib_version
+				jansson >= $jansson_version
+				libavutil
+				libavcodec
+				libavformat
+				ogg
                   ])
 
 AC_ARG_ENABLE([plugin-audiobridge],
@@ -658,7 +662,7 @@ AC_ARG_ENABLE([plugin-recordplay],
 
 AC_ARG_ENABLE([plugin-hls],
               [AS_HELP_STRING([--disable-plugin-hls],
-                              [Disable record&play plugin])],
+                              [Disable HLS plugin])],
               [AS_IF([test "x$enable_plugin_hls" != "xyes"],
                      [enable_plugin_hls=no])],
               [enable_plugin_hls=yes])
