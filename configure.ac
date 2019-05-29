@@ -159,6 +159,8 @@ AC_ARG_ENABLE([all-plugins],
                      [enable_plugin_lua=no])
                AS_IF([test "x$enable_plugin_recordplay" != "xyes"],
                      [enable_plugin_recordplay=no])
+		   AS_IF([test "x$enable_plugin_hls" != "xyes"],
+                     [enable_plugin_hls=no])
                AS_IF([test "x$enable_plugin_sip" != "xyes"],
                      [enable_plugin_sip=no])
                AS_IF([test "x$enable_plugin_sipre" != "xyes"],
@@ -615,8 +617,12 @@ AS_IF([test "x$enable_systemd_sockets" = "xyes"],
 
 PKG_CHECK_MODULES([PLUGINS],
                   [
-                    glib-2.0 >= $glib_version
-                    jansson >= $jansson_version
+				glib-2.0 >= $glib_version
+				jansson >= $jansson_version
+				libavutil
+				libavcodec
+				libavformat
+				ogg
                   ])
 
 AC_ARG_ENABLE([plugin-audiobridge],
@@ -653,6 +659,13 @@ AC_ARG_ENABLE([plugin-recordplay],
               [AS_IF([test "x$enable_plugin_recordplay" != "xyes"],
                      [enable_plugin_recordplay=no])],
               [enable_plugin_recordplay=yes])
+
+AC_ARG_ENABLE([plugin-hls],
+              [AS_HELP_STRING([--disable-plugin-hls],
+                              [Disable HLS plugin])],
+              [AS_IF([test "x$enable_plugin_hls" != "xyes"],
+                     [enable_plugin_hls=no])],
+              [enable_plugin_hls=yes])
 
 AC_ARG_ENABLE([plugin-sip],
               [AS_HELP_STRING([--disable-plugin-sip],
@@ -809,6 +822,7 @@ AM_CONDITIONAL([ENABLE_PLUGIN_DUKTAPE], [test "x$enable_plugin_duktape" = "xyes"
 AM_CONDITIONAL([ENABLE_PLUGIN_ECHOTEST], [test "x$enable_plugin_echotest" = "xyes"])
 AM_CONDITIONAL([ENABLE_PLUGIN_LUA], [test "x$enable_plugin_lua" = "xyes"])
 AM_CONDITIONAL([ENABLE_PLUGIN_RECORDPLAY], [test "x$enable_plugin_recordplay" = "xyes"])
+AM_CONDITIONAL([ENABLE_PLUGIN_HLS], [test "x$enable_plugin_hls" = "xyes"])
 AM_CONDITIONAL([ENABLE_PLUGIN_SIP], [test "x$enable_plugin_sip" = "xyes"])
 AM_CONDITIONAL([ENABLE_PLUGIN_SIPRE], [test "x$enable_plugin_sipre" = "xyes"])
 AM_CONDITIONAL([ENABLE_PLUGIN_NOSIP], [test "x$enable_plugin_nosip" = "xyes"])
@@ -1001,6 +1015,9 @@ AM_COND_IF([ENABLE_PLUGIN_VOICEMAIL],
 AM_COND_IF([ENABLE_PLUGIN_RECORDPLAY],
 	[echo "    Record&Play:           yes"],
 	[echo "    Record&Play:           no"])
+AM_COND_IF([ENABLE_PLUGIN_HLS],
+	[echo "    HLS:                   yes"],
+	[echo "    HLS:                   no"])
 AM_COND_IF([ENABLE_PLUGIN_TEXTROOM],
 	[echo "    Text Room:             yes"],
 	[echo "    Text Room:             no"])

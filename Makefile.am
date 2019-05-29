@@ -46,6 +46,9 @@ stream_DATA = $(NULL)
 recordingsdir = $(datadir)/janus/recordings
 recordings_DATA = $(NULL)
 
+chunksdir = $(datadir)/janus/chunks
+chunks_DATA = $(NULL)
+
 luadir = $(datadir)/janus/lua
 lua_DATA = $(NULL)
 
@@ -66,6 +69,7 @@ jsmodules_DATA = html/janus.js
 	    s|[@]transportdir[@]|$(transportdir)|;\
 	    s|[@]eventdir[@]|$(eventdir)|;\
 	    s|[@]recordingsdir[@]|$(recordingsdir)|;\
+		s|[@]chunksdir[@]|$(chunksdir)|;\
 	    s|[@]demosdir[@]|$(demosdir)|;\
 	    s|[@]streamdir[@]|$(streamdir)|; \
 	    s|[@]luadir[@]|$(luadir)|; \
@@ -382,6 +386,17 @@ EXTRA_DIST += \
 	conf/janus.plugin.recordplay.jcfg.sample.in \
 	$(recordings_DATA)
 CLEANFILES += conf/janus.plugin.recordplay.jcfg.sample
+endif
+
+if ENABLE_PLUGIN_HLS
+plugin_LTLIBRARIES += plugins/libjanus_hls.la
+plugins_libjanus_hls_la_SOURCES = plugins/janus_hls.c plugins/janus_hls_recorder.h plugins/janus_hls_recorder.c
+plugins_libjanus_hls_la_CFLAGS = $(plugins_cflags)
+plugins_libjanus_hls_la_LDFLAGS = $(plugins_ldflags)
+plugins_libjanus_hls_la_LIBADD = $(plugins_libadd)
+conf_DATA += conf/janus.plugin.hls.jcfg.sample
+EXTRA_DIST += conf/janus.plugin.hls.jcfg.sample.in
+CLEANFILES += conf/janus.plugin.hls.jcfg.sample
 endif
 
 if ENABLE_PLUGIN_SIP

@@ -69,3 +69,4 @@ Makefile.in
 
 # OS X
 .DS_Store
+.vscode
