@@ -150,6 +150,8 @@ typedef struct janus_hls_recording {
 	volatile gint destroyed;	/* Whether this recording has been marked as destroyed */
 	janus_refcount ref;			/* Reference counter */
 	janus_mutex mutex;			/* Mutex for this recording */
+
+	uint8_t *received_frame; 	/* frame buffer */
 } janus_hls_recording;
 
 static GHashTable *recordings = NULL;
@@ -441,7 +443,7 @@ void janus_hls_create_session(janus_plugin_session *handle, int *error) {
 	session->video_remb_last = janus_get_monotonic_time();
 	session->video_bitrate = 1024 * 1024; 		/* This is 1mbps by default */
 	session->video_keyframe_request_last = 0;
-	session->video_keyframe_interval = 60000; 	/* 60 seconds by default */
+	session->video_keyframe_interval = 10000; 	/* 10 seconds by default */
 	session->video_fir_seq = 0;
 	janus_rtp_switching_context_reset(&session->context);
 	janus_rtp_simulcasting_context_reset(&session->sim_context);
@@ -747,6 +749,8 @@ void janus_hls_send_rtcp_feedback(janus_plugin_session *handle, int video, char 
 	}
 }
 
+#define uint32s_in_rtp_header 3
+
 void janus_hls_incoming_rtp(janus_plugin_session *handle, int video, char *buf, int len) {
 	if (handle == NULL || g_atomic_int_get(&handle->stopped) || g_atomic_int_get(&stopping) || !g_atomic_int_get(&initialized)) {
 		return;
@@ -767,6 +771,72 @@ void janus_hls_incoming_rtp(janus_plugin_session *handle, int video, char *buf, 
 		return;
 	}
 
+	if (video) {
+		janus_rtp_header *header = (janus_rtp_header *)buf;
+
+		if (header) {
+			int profile_len = 0;
+
+			if (header->extension == 1) {
+				janus_rtp_header_extension *xtn_hdr = (janus_rtp_header_extension *)((uint32_t *)header + uint32s_in_rtp_header + header->csrccount);
+
+				profile_len = ntohs(xtn_hdr->length);
+			}
+
+			JANUS_LOG(
+				LOG_HUGE,
+				"[%s-%p] RTP Header: \n\tSeq=%"SCNu16", \n\tType=%"SCNu16", \n\tSsrc=%"SCNu32", \n\tTs=%"SCNu32", \n\tExt=%"SCNu16", \n\tProfile=%lu\n",
+				JANUS_HLS_PACKAGE,
+				handle,
+				ntohs(header->seq_number),
+				header->type,
+				ntohl(header->ssrc),
+				ntohl(header->timestamp),
+				header->extension,
+				profile_len
+			);
+		} else {
+			JANUS_LOG(LOG_HUGE, "[%s-%p] RTP Header empty\n", JANUS_HLS_PACKAGE, handle);
+		}
+
+
+		int plen = 0;
+		char *payload = janus_rtp_payload(buf, len, &plen);
+
+		JANUS_LOG(LOG_HUGE, "[%s-%p] Payload len=%d (%lu)\n", JANUS_HLS_PACKAGE, handle, plen, strlen(payload));
+
+		if (payload) {
+
+			gboolean kf = janus_h264_is_keyframe(payload, plen);
+			if (kf) {
+				JANUS_LOG(LOG_HUGE, "[%s-%p] New keyframe received! ts=%"SCNu32"\n", JANUS_HLS_PACKAGE, handle, header->timestamp);
+			}
+
+			char newname[1024];
+			memset(newname, 0, 1024);
+			g_snprintf(newname, 1024, "%s/%s.h264", recordings_path, session->recording->name);
+
+			// JANUS_LOG(LOG_HUGE, "[%s-%p] Write file %s\n", JANUS_HLS_PACKAGE, handle, newname);
+
+			FILE *file = fopen(newname, "ab");
+
+			int temp = 0, tot = plen;
+			while (tot > 0) {
+				temp = fwrite(payload+plen-tot, sizeof(char), tot, file);
+				if (temp <= 0) {
+					JANUS_LOG(LOG_ERR, "Error saving frame...\n");
+
+					return;
+				}
+
+				tot -= temp;
+			}
+
+			fclose(file);
+
+		}
+	}
+/*
 	janus_hls_frame *frame = g_malloc(sizeof(janus_hls_frame));
 	frame->buffer = g_strdup(buf);
 	frame->len = len;
@@ -778,15 +848,17 @@ void janus_hls_incoming_rtp(janus_plugin_session *handle, int video, char *buf, 
 	}
 
 	janus_hls_recorder_save_frame(session->rc, frame);
+*/
+
 
 	/* Save the frame if we're recording */
 	//janus_recorder_save_frame(video ? session->vrc : session->arc, buf, len);
 
-	JANUS_LOG(LOG_VERB, "[%s-%p] Save frame len: %d\n", JANUS_HLS_PACKAGE, handle, len);
+	//JANUS_LOG(LOG_VERB, "[%s-%p] Save frame len: %d\n", JANUS_HLS_PACKAGE, handle, len);
 
 	janus_hls_send_rtcp_feedback(handle, video, buf, len);
 
-	g_free(frame);
+	//g_free(frame);
 }
 
 void janus_hls_incoming_rtcp(janus_plugin_session *handle, int video, char *buf, int len) {
@@ -1135,6 +1207,8 @@ static void *janus_hls_handler(void *data) {
 
 				rec->vrc_file = g_strdup(filename);
 				session->vrc = janus_recorder_create(recordings_path, janus_videocodec_name(rec->vcodec), rec->vrc_file);
+
+				rec->received_frame = g_malloc0(1920 * 1080 * 3);
 			}
 
 			session->recorder = TRUE;

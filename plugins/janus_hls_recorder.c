@@ -306,6 +306,9 @@ int janus_hls_recorder_save_frame(janus_hls_recorder *recorder, janus_hls_frame 
 
 	AVPacket *packet = g_malloc(sizeof(AVPacket));
 	av_init_packet(packet);
+	packet->flags |= AV_PKT_FLAG_KEY;
+	packet->pts = packet->dts = 0;
+
 	av_packet_from_data(packet, frame->buffer, frame->len);
 
 	janus_mutex_lock_nodebug(&recorder->mutex);

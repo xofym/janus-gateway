@@ -1016,8 +1016,8 @@ AM_COND_IF([ENABLE_PLUGIN_RECORDPLAY],
 	[echo "    Record&Play:           yes"],
 	[echo "    Record&Play:           no"])
 AM_COND_IF([ENABLE_PLUGIN_HLS],
-	[echo "    HLS:           	    yes"],
-	[echo "    HLS:           	    no"])
+	[echo "    HLS:                   yes"],
+	[echo "    HLS:                   no"])
 AM_COND_IF([ENABLE_PLUGIN_TEXTROOM],
 	[echo "    Text Room:             yes"],
 	[echo "    Text Room:             no"])
